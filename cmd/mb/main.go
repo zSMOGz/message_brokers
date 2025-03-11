@@ -2,19 +2,16 @@ package main
 
 import (
 	"context"
-	"mb/internal/app"
-	"mb/internal/config"
-	"mb/internal/metrics"
 	"os/signal"
 	"syscall"
 
-	"github.com/sirupsen/logrus"
+	"mb/internal/app"
+	"mb/internal/config"
+	"mb/internal/metrics"
 )
 
-var log = logrus.New()
-
 func main() {
-	setupLogger()
+	log := app.SetupLogger()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -39,9 +36,4 @@ func main() {
 
 	<-ctx.Done()
 	log.Info("Получен сигнал завершения работы...")
-}
-
-func setupLogger() {
-	log.SetFormatter(&logrus.JSONFormatter{})
-	log.SetLevel(logrus.DebugLevel)
 }

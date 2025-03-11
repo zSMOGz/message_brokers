@@ -3,7 +3,6 @@ package kafka
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -11,32 +10,46 @@ import (
 	"mb/internal/config"
 )
 
-func ProduceMessages(ctx context.Context, cfg *config.Config) {
-	producer, err := createProducer(cfg)
+type Producer struct {
+	syncProducer  sarama.SyncProducer
+	asyncProducer sarama.AsyncProducer
+}
+
+func NewProducer(cfg *config.Config) (*Producer, error) {
+	syncProducer, err := createSyncProducer(cfg)
 	if err != nil {
-		log.Fatalf("Ошибка создания отправителя: %v", err)
+		return nil, err
 	}
-	defer producer.Close()
 
-	for i := 0; i < MessageCount; i++ {
-		if err := sendMessage(ctx, producer, cfg, i); err != nil {
-			log.Printf("Ошибка отправки сообщения: %v", err)
-		}
+	asyncProducer, err := createAsyncProducer(cfg)
+	if err != nil {
+		syncProducer.Close()
+		return nil, err
+	}
+
+	return &Producer{
+		syncProducer:  syncProducer,
+		asyncProducer: asyncProducer,
+	}, nil
+}
+
+func (p *Producer) Close() {
+	if p.syncProducer != nil {
+		p.syncProducer.Close()
+	}
+	if p.asyncProducer != nil {
+		p.asyncProducer.Close()
 	}
 }
 
-func createProducer(cfg *config.Config) (sarama.SyncProducer, error) {
-	return sarama.NewSyncProducer([]string{cfg.Kafka.Broker}, GetSaramaConfig())
-}
-
-func sendMessage(ctx context.Context, producer sarama.SyncProducer, cfg *config.Config, index int) error {
+func (p *Producer) SendSync(ctx context.Context, cfg *config.Config, index int, prefix string) error {
 	msg := &sarama.ProducerMessage{
 		Topic: cfg.Kafka.TopicName,
-		Value: sarama.StringEncoder(fmt.Sprintf("Сообщение %d", index)),
+		Value: sarama.StringEncoder(fmt.Sprintf("%s Сообщение %d", prefix, index)),
 	}
 
 	err := retry(DefaultRetryCount, DefaultRetryDelay, func() error {
-		_, _, err := producer.SendMessage(msg)
+		_, _, err := p.syncProducer.SendMessage(msg)
 		return err
 	})
 
@@ -46,6 +59,27 @@ func sendMessage(ctx context.Context, producer sarama.SyncProducer, cfg *config.
 	default:
 		return err
 	}
+}
+
+func (p *Producer) SendAsync(ctx context.Context, cfg *config.Config, index int, prefix string) {
+	msg := &sarama.ProducerMessage{
+		Topic: cfg.Kafka.TopicName,
+		Value: sarama.StringEncoder(fmt.Sprintf("%s Сообщение %d", prefix, index)),
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	case p.asyncProducer.Input() <- msg:
+	}
+}
+
+func createSyncProducer(cfg *config.Config) (sarama.SyncProducer, error) {
+	return sarama.NewSyncProducer([]string{cfg.Kafka.Broker}, GetSaramaConfig())
+}
+
+func createAsyncProducer(cfg *config.Config) (sarama.AsyncProducer, error) {
+	return sarama.NewAsyncProducer([]string{cfg.Kafka.Broker}, GetSaramaConfig())
 }
 
 func retry(attempts int, sleep time.Duration, f func() error) error {
