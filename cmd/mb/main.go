@@ -20,6 +20,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	log.Println("Приложение запущено, ожидание сигнала завершения...")
 
 	application := app.New(log, cfg)
 

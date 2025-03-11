@@ -2,11 +2,12 @@ package app
 
 import (
 	"context"
-	"mb/internal/config"
-	"mb/internal/kafka"
 	"time"
 
 	"github.com/sirupsen/logrus"
+
+	"mb/internal/config"
+	"mb/internal/kafka"
 )
 
 type App struct {

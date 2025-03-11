@@ -15,6 +15,7 @@ type KafkaConfig struct {
 	Broker      string `mapstructure:"broker"`
 	TopicName   string `mapstructure:"topic_name"`
 	MaxAttempts int    `mapstructure:"max_attempts"`
+	NumWorkers  int    `mapstructure:"num_workers"`
 }
 
 type Config struct {

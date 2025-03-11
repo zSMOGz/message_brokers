@@ -2,3 +2,4 @@ kafka:
   broker: "kafka:9092"
   topic_name: "test-topic"
   max_attempts: 5
+  num_workers: 4

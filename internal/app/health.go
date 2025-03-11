@@ -2,11 +2,12 @@ package app
 
 import (
 	"context"
-	"mb/internal/config"
-	"mb/internal/kafka"
 	"net/http"
 
 	"github.com/heptiolabs/healthcheck"
+
+	"mb/internal/config"
+	"mb/internal/kafka"
 )
 
 func SetupHealthCheck(cfg *config.Config) healthcheck.Handler {
