@@ -20,6 +20,8 @@ func main() {
 	topicFlag := flag.String("topic", "", "Имя темы Kafka (если не указано, используется из конфига)")
 	groupFlag := flag.String("group", "key-value-consumer-group", "Имя группы потребителей")
 	fromBeginningFlag := flag.Bool("from-beginning", true, "Читать сообщения с начала")
+	autoCommitFlag := flag.Bool("auto-commit", true, "Автоматически подтверждать сообщения")
+	commitIntervalFlag := flag.Int("commit-interval", 1, "Интервал подтверждения сообщений (в секундах)")
 	flag.Parse()
 
 	// Настраиваем логгер
@@ -48,6 +50,10 @@ func main() {
 	saramaConfig.Consumer.Return.Errors = true
 	saramaConfig.Version = sarama.V2_1_0_0
 
+	// Настройка автоматического подтверждения
+	saramaConfig.Consumer.Offsets.AutoCommit.Enable = *autoCommitFlag
+	saramaConfig.Consumer.Offsets.AutoCommit.Interval = time.Duration(*commitIntervalFlag) * time.Second
+
 	// Настройка начального смещения
 	if *fromBeginningFlag {
 		saramaConfig.Consumer.Offsets.Initial = sarama.OffsetOldest
@@ -57,6 +63,8 @@ func main() {
 
 	// Создаем группу потребителей
 	log.Infof("Создаем группу потребителей %s для темы %s", *groupFlag, topic)
+	log.Infof("Автоподтверждение: %v, интервал подтверждения: %d сек", *autoCommitFlag, *commitIntervalFlag)
+
 	consumerGroup, err := sarama.NewConsumerGroup([]string{cfg.Kafka.Broker}, *groupFlag, saramaConfig)
 	if err != nil {
 		log.Fatalf("Ошибка создания группы потребителей: %v", err)
@@ -67,6 +75,7 @@ func main() {
 	handler := &KeyValueHandler{
 		log:         log,
 		readySignal: make(chan bool),
+		autoCommit:  *autoCommitFlag,
 	}
 
 	// Обработка ошибок группы потребителей
@@ -106,13 +115,16 @@ func main() {
 
 // KeyValueHandler обрабатывает сообщения, выводя ключи и значения
 type KeyValueHandler struct {
-	log         *logrus.Logger
-	readySignal chan bool
-	ready       bool
+	log          *logrus.Logger
+	readySignal  chan bool
+	ready        bool
+	autoCommit   bool
+	messageCount int
 }
 
 func (h *KeyValueHandler) Setup(session sarama.ConsumerGroupSession) error {
 	h.log.Infof("Настройка сессии для разделов: %v", session.Claims())
+	h.messageCount = 0
 
 	// Отправляем сигнал готовности только один раз
 	if !h.ready {
@@ -124,7 +136,7 @@ func (h *KeyValueHandler) Setup(session sarama.ConsumerGroupSession) error {
 }
 
 func (h *KeyValueHandler) Cleanup(session sarama.ConsumerGroupSession) error {
-	h.log.Info("Очистка сессии")
+	h.log.Infof("Очистка сессии. Обработано сообщений: %d", h.messageCount)
 	return nil
 }
 
@@ -132,6 +144,8 @@ func (h *KeyValueHandler) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 	h.log.Infof("Начинаем обработку раздела %d темы %s", claim.Partition(), claim.Topic())
 
 	for message := range claim.Messages() {
+		h.messageCount++
+
 		// Получаем ключ и значение
 		key := "<nil>"
 		if message.Key != nil {
@@ -151,10 +165,22 @@ func (h *KeyValueHandler) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 		fmt.Printf("РАЗДЕЛ: %d\n", message.Partition)
 		fmt.Printf("СМЕЩЕНИЕ: %d\n", message.Offset)
 		fmt.Printf("МЕТКА ВРЕМЕНИ: %v\n", message.Timestamp)
+
+		// Подтверждаем получение сообщения
+		if h.autoCommit {
+			session.MarkMessage(message, "")
+			fmt.Println("СТАТУС: Сообщение подтверждено ✓")
+		} else {
+			fmt.Println("СТАТУС: Сообщение не подтверждено (автоподтверждение выключено)")
+		}
+
 		fmt.Println("===============================================")
 
-		// Отмечаем сообщение как обработанное
-		session.MarkMessage(message, "")
+		// Периодически выводим статистику
+		if h.messageCount%10 == 0 {
+			h.log.Infof("Обработано сообщений: %d (последнее смещение: %d, раздел: %d)",
+				h.messageCount, message.Offset, message.Partition)
+		}
 	}
 
 	return nil
