@@ -44,3 +44,14 @@ services:
       - kafka
     restart: on-failure
     command: [ "/bin/sh", "-c", "sleep 15 && ./console-consumer" ]
+
+  producer-with-keys:
+    build:
+      context: .
+      dockerfile: Dockerfile.producer-with-keys
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER: kafka:9092
+    command: [ "./producer-with-keys", "-n", "20", "-keys", "5" ]

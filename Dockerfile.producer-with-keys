@@ -1,0 +1,25 @@
+FROM golang:1.23-alpine
+
+WORKDIR /app
+
+# Копируем сначала go.mod и go.sum для кэширования зависимостей
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Устанавливаем зависимости
+RUN apk add --no-cache gcc musl-dev bash
+
+# Копируем весь код
+COPY . .
+
+# Компилируем приложение для отправки сообщений с ключами
+RUN go build -o producer-with-keys cmd/producer-with-keys/main.go
+
+# Делаем файл исполняемым
+RUN chmod +x producer-with-keys
+
+# Проверяем, что файл существует
+RUN ls -la producer-with-keys
+
+# Стандартная команда запуска
+CMD ["./producer-with-keys"] 
