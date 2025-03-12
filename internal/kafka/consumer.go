@@ -11,26 +11,17 @@ import (
 	"mb/internal/config"
 )
 
-func ConsumeMessages(ctx context.Context, cfg *config.Config) {
+// Глобальная переменная для отслеживания состояния
+var ConsumerReady = false
+
+func ConsumeMessages(ctx context.Context, cfg *config.Config, ready chan<- bool) {
 	log.Println("Подключение к Kafka...")
-	consumer, err := sarama.NewConsumer([]string{cfg.Kafka.Broker}, GetSaramaConfig())
+	consumerGroup, err := sarama.NewConsumerGroup([]string{cfg.Kafka.Broker}, cfg.Kafka.ConsumerGroup, GetSaramaConfig())
 	if err != nil {
 		log.Fatalf("Ошибка создания потребителя: %v", err)
 	}
-	defer consumer.Close()
+	defer consumerGroup.Close()
 	log.Println("Успешно подключен к Kafka")
-
-	log.Println("Создание потребителя для раздела...")
-	partitionConsumer, err := consumer.ConsumePartition(
-		cfg.Kafka.TopicName,
-		DefaultPartition,
-		sarama.OffsetOldest,
-	)
-	if err != nil {
-		log.Fatalf("Ошибка создания потребителя для раздела: %v", err)
-	}
-	defer partitionConsumer.Close()
-	log.Println("Успешно создан потребитель для раздела")
 
 	// Используем количество воркеров из конфигурации
 	messages := make(chan *sarama.ConsumerMessage, cfg.Kafka.NumWorkers*2)
@@ -43,7 +34,15 @@ func ConsumeMessages(ctx context.Context, cfg *config.Config) {
 	}
 	log.Println("Воркеры успешно запущены")
 
-	// Чтение сообщений и отправка в канал
+	// Создаем обработчик для ConsumerGroup
+	handler := &ConsumerGroupHandler{
+		messages: messages,
+		ready:    ready,
+	}
+
+	log.Println("Потребитель успешно запущен")
+
+	// Запускаем потребление сообщений
 	for {
 		select {
 		case <-ctx.Done():
@@ -51,11 +50,11 @@ func ConsumeMessages(ctx context.Context, cfg *config.Config) {
 			close(messages)
 			wg.Wait()
 			return
-		case msg := <-partitionConsumer.Messages():
-			log.Printf("Получено сообщение из Kafka: %s", string(msg.Value))
-			messages <- msg
-		case err := <-partitionConsumer.Errors():
-			log.Printf("Ошибка получения сообщения: %v", err)
+		default:
+			// Потребляем сообщения через ConsumerGroup
+			if err := consumerGroup.Consume(ctx, []string{cfg.Kafka.TopicName}, handler); err != nil {
+				log.Printf("Ошибка потребления сообщений: %v", err)
+			}
 		}
 	}
 }
@@ -90,5 +89,49 @@ func processMessage(msg *sarama.ConsumerMessage, workerID int) error {
 	log.Printf("Воркер %d: Обработанное сообщение: %s", workerID, processedMessage)
 
 	// Возвращаем nil, если обработка прошла успешно
+	return nil
+}
+
+// Реализация ConsumerGroupHandler
+type ConsumerGroupHandler struct {
+	messages  chan<- *sarama.ConsumerMessage
+	ready     chan<- bool
+	setupDone bool
+}
+
+func (h *ConsumerGroupHandler) Setup(session sarama.ConsumerGroupSession) error {
+	log.Println("Настройка ConsumerGroup")
+
+	if !h.setupDone && h.ready != nil {
+		log.Println("Отправка сигнала готовности...")
+		select {
+		case h.ready <- true:
+			log.Println("Сигнал готовности отправлен")
+		default:
+			log.Println("Не удалось отправить сигнал готовности (канал полон или закрыт)")
+		}
+		h.setupDone = true
+	}
+
+	return nil
+}
+
+func (h *ConsumerGroupHandler) Cleanup(sarama.ConsumerGroupSession) error {
+	log.Println("Очистка ConsumerGroup")
+	return nil
+}
+
+func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	log.Println("Начало выполнения ConsumeClaim")
+	log.Printf("Подписка на тему: %s, раздел: %d", claim.Topic(), claim.Partition())
+
+	for msg := range claim.Messages() {
+		log.Printf("Получено сообщение в ConsumeClaim: %s", string(msg.Value))
+		h.messages <- msg
+		session.MarkMessage(msg, "")
+		log.Printf("Сообщение обработано и помечено в ConsumeClaim: %s", string(msg.Value))
+	}
+
+	log.Println("Завершение выполнения ConsumeClaim")
 	return nil
 }

@@ -10,6 +10,12 @@ import (
 	"mb/internal/kafka"
 )
 
+// Константы для ожидания готовности потребителя
+const (
+	MaxConsumerReadyAttempts    = 15
+	ConsumerReadyAttemptTimeout = 1 * time.Second
+)
+
 type App struct {
 	log *logrus.Logger
 	cfg *config.Config
@@ -27,18 +33,54 @@ func (a *App) InitializeKafka(ctx context.Context) error {
 }
 
 func (a *App) RunProducerConsumer(ctx context.Context) {
+	// Убедимся, что Kafka доступна перед запуском
+	a.log.Println("Проверяем доступность Kafka")
+	if err := a.InitializeKafka(ctx); err != nil {
+		a.log.Fatalf("Kafka недоступна: %v", err)
+	}
+	a.log.Println("Kafka доступна")
+
 	producer, err := kafka.NewProducer(a.cfg)
 	if err != nil {
 		a.log.Fatalf("Ошибка создания производителя: %v", err)
 	}
 	defer producer.Close()
 
-	// Каждый отправитель отправляет половину сообщений
+	// Канал для сигнализации о готовности
+	consumerReady := make(chan bool, 1)
+
+	go kafka.ConsumeMessages(ctx, a.cfg, consumerReady)
+
+	var consumerIsReady bool
+
+	// Ожидание готовности потребителя с несколькими попытками
+	for attempt := 0; attempt <= MaxConsumerReadyAttempts; attempt++ {
+		a.log.Printf("Ожидаем готовности потребителя... Попытка %d из %d", attempt, MaxConsumerReadyAttempts)
+
+		select {
+		case <-consumerReady:
+			a.log.Println("Потребитель готов, запускаем продюсеров")
+			consumerIsReady = true
+		case <-time.After(ConsumerReadyAttemptTimeout):
+			a.log.Printf("Таймаут ожидания готовности потребителя (попытка %d), продолжаем ожидание", attempt)
+		}
+
+		if consumerIsReady {
+			break
+		}
+	}
+
+	if !consumerIsReady {
+		a.log.Printf("Превышено максимальное количество попыток (%d), запускаем продюсеров без подтверждения готовности", MaxConsumerReadyAttempts)
+	}
+
+	// Запуск продюсеров
+	a.log.Println("Запускаем продюсеров...")
 	go a.runSyncProducer(ctx, producer, kafka.MessageCount/2)
 	go a.runAsyncProducer(ctx, producer, kafka.MessageCount/2)
 
-	time.Sleep(2 * time.Second)
-	kafka.ConsumeMessages(ctx, a.cfg)
+	// Ожидание завершения контекста
+	<-ctx.Done()
 }
 
 func (a *App) runSyncProducer(ctx context.Context, producer *kafka.Producer, count int) {

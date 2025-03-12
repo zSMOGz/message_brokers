@@ -43,10 +43,13 @@ func (p *Producer) Close() {
 }
 
 func (p *Producer) SendSync(ctx context.Context, cfg *config.Config, index int, prefix string) error {
+	message := fmt.Sprintf("%s Сообщение %d", prefix, index)
 	msg := &sarama.ProducerMessage{
 		Topic: cfg.Kafka.TopicName,
-		Value: sarama.StringEncoder(fmt.Sprintf("%s Сообщение %d", prefix, index)),
+		Value: sarama.StringEncoder(message),
 	}
+
+	fmt.Printf("Отправка сообщения через SyncProducer: %s\n", message)
 
 	err := retry(DefaultRetryCount, DefaultRetryDelay, func() error {
 		_, _, err := p.syncProducer.SendMessage(msg)

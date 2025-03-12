@@ -12,10 +12,11 @@ const (
 )
 
 type KafkaConfig struct {
-	Broker      string `mapstructure:"broker"`
-	TopicName   string `mapstructure:"topic_name"`
-	MaxAttempts int    `mapstructure:"max_attempts"`
-	NumWorkers  int    `mapstructure:"num_workers"`
+	Broker        string `mapstructure:"broker"`
+	TopicName     string `mapstructure:"topic_name"`
+	MaxAttempts   int    `mapstructure:"max_attempts"`
+	NumWorkers    int    `mapstructure:"num_workers"`
+	ConsumerGroup string `mapstructure:"consumer_group"`
 }
 
 type Config struct {
