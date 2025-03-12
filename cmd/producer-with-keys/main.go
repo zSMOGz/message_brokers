@@ -15,7 +15,6 @@ import (
 )
 
 func main() {
-	// Парсим аргументы командной строки
 	numMessages := flag.Int("n", 10, "Количество сообщений для отправки")
 	numKeys := flag.Int("keys", 3, "Количество разных ключей")
 	flag.Parse()

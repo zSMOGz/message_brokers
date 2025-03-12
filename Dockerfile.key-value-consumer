@@ -1,0 +1,18 @@
+FROM golang:1.23-alpine
+
+WORKDIR /app
+
+# Устанавливаем зависимости сначала
+RUN apk add --no-cache gcc musl-dev bash
+
+# Копируем весь код
+COPY . .
+
+# Компилируем приложение
+RUN go build -o key-value-consumer cmd/key-value-consumer/main.go
+
+# Делаем файл исполняемым
+RUN chmod +x key-value-consumer
+
+# Стандартная команда запуска
+CMD ["./key-value-consumer"] 

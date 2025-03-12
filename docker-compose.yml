@@ -55,3 +55,14 @@ services:
     environment:
       KAFKA_BROKER: kafka:9092
     command: [ "./producer-with-keys", "-n", "20", "-keys", "5" ]
+
+  key-value-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.key-value-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER: kafka:9092
+    command: [ "./key-value-consumer", "--topic", "test-topic", "--group", "key-value-consumer-group", "--from-beginning", "true" ]
