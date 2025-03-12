@@ -20,8 +20,11 @@ func main() {
 	topicFlag := flag.String("topic", "", "Имя темы Kafka (если не указано, используется из конфига)")
 	groupFlag := flag.String("group", "key-value-consumer-group", "Имя группы потребителей")
 	fromBeginningFlag := flag.Bool("from-beginning", true, "Читать сообщения с начала")
+
+	// Параметры для автоматического коммита
 	autoCommitFlag := flag.Bool("auto-commit", true, "Автоматически подтверждать сообщения")
-	commitIntervalFlag := flag.Int("commit-interval", 1, "Интервал подтверждения сообщений (в секундах)")
+	commitIntervalFlag := flag.Int("commit-interval", 1, "Интервал автоматического подтверждения (в секундах)")
+	manualMarkFlag := flag.Bool("manual-mark", false, "Вручную отмечать сообщения как прочитанные")
 	flag.Parse()
 
 	// Настраиваем логгер
@@ -61,9 +64,15 @@ func main() {
 		saramaConfig.Consumer.Offsets.Initial = sarama.OffsetNewest
 	}
 
+	// Включение расширенного логирования состояния группы
+	saramaConfig.Consumer.Group.Session.Timeout = 20 * time.Second
+	saramaConfig.Consumer.Group.Heartbeat.Interval = 6 * time.Second
+	saramaConfig.Consumer.Group.Rebalance.Strategy = sarama.NewBalanceStrategyRoundRobin()
+
 	// Создаем группу потребителей
 	log.Infof("Создаем группу потребителей %s для темы %s", *groupFlag, topic)
-	log.Infof("Автоподтверждение: %v, интервал подтверждения: %d сек", *autoCommitFlag, *commitIntervalFlag)
+	log.Infof("Режим коммита: автоматический=%v, интервал=%d сек, ручная отметка=%v",
+		*autoCommitFlag, *commitIntervalFlag, *manualMarkFlag)
 
 	consumerGroup, err := sarama.NewConsumerGroup([]string{cfg.Kafka.Broker}, *groupFlag, saramaConfig)
 	if err != nil {
@@ -73,9 +82,11 @@ func main() {
 
 	// Создаем обработчик
 	handler := &KeyValueHandler{
-		log:         log,
-		readySignal: make(chan bool),
-		autoCommit:  *autoCommitFlag,
+		log:            log,
+		readySignal:    make(chan bool),
+		autoCommit:     *autoCommitFlag,
+		manualMark:     *manualMarkFlag,
+		commitInterval: *commitIntervalFlag,
 	}
 
 	// Обработка ошибок группы потребителей
@@ -107,6 +118,7 @@ func main() {
 	// Ожидаем сигнал готовности
 	<-handler.readySignal
 	log.Info("Потребитель готов к приему сообщений...")
+	log.Infof("Автоматический коммит будет выполняться каждые %d секунд", *commitIntervalFlag)
 
 	// Ожидаем сигнал завершения
 	<-ctx.Done()
@@ -115,16 +127,20 @@ func main() {
 
 // KeyValueHandler обрабатывает сообщения, выводя ключи и значения
 type KeyValueHandler struct {
-	log          *logrus.Logger
-	readySignal  chan bool
-	ready        bool
-	autoCommit   bool
-	messageCount int
+	log            *logrus.Logger
+	readySignal    chan bool
+	ready          bool
+	autoCommit     bool
+	manualMark     bool
+	commitInterval int
+	messageCount   int
+	lastCommitTime time.Time
 }
 
 func (h *KeyValueHandler) Setup(session sarama.ConsumerGroupSession) error {
 	h.log.Infof("Настройка сессии для разделов: %v", session.Claims())
 	h.messageCount = 0
+	h.lastCommitTime = time.Now()
 
 	// Отправляем сигнал готовности только один раз
 	if !h.ready {
@@ -142,6 +158,8 @@ func (h *KeyValueHandler) Cleanup(session sarama.ConsumerGroupSession) error {
 
 func (h *KeyValueHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	h.log.Infof("Начинаем обработку раздела %d темы %s", claim.Partition(), claim.Topic())
+
+	lastLoggedOffset := int64(-1)
 
 	for message := range claim.Messages() {
 		h.messageCount++
@@ -167,19 +185,40 @@ func (h *KeyValueHandler) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 		fmt.Printf("МЕТКА ВРЕМЕНИ: %v\n", message.Timestamp)
 
 		// Подтверждаем получение сообщения
-		if h.autoCommit {
+		commitStatus := "Ожидание автоматического коммита"
+		if h.manualMark {
 			session.MarkMessage(message, "")
-			fmt.Println("СТАТУС: Сообщение подтверждено ✓")
+			commitStatus = "Сообщение отмечено для коммита"
+		}
+
+		// Определяем статус коммита
+		if h.autoCommit {
+			timeSinceCommit := time.Since(h.lastCommitTime).Seconds()
+			timeToNextCommit := float64(h.commitInterval) - timeSinceCommit
+			if timeToNextCommit < 0 {
+				timeToNextCommit = 0
+			}
+
+			fmt.Printf("СТАТУС: %s (автокоммит через %.1f сек)\n",
+				commitStatus, timeToNextCommit)
 		} else {
-			fmt.Println("СТАТУС: Сообщение не подтверждено (автоподтверждение выключено)")
+			fmt.Println("СТАТУС: Автоматический коммит отключен")
 		}
 
 		fmt.Println("===============================================")
 
-		// Периодически выводим статистику
-		if h.messageCount%10 == 0 {
-			h.log.Infof("Обработано сообщений: %d (последнее смещение: %d, раздел: %d)",
-				h.messageCount, message.Offset, message.Partition)
+		// Выводим статистику при обработке 10 сообщений или изменении раздела
+		if h.messageCount%10 == 0 || lastLoggedOffset == -1 || message.Partition != claim.Partition() {
+			h.log.Infof("Обработано сообщений: %d (раздел: %d, смещение: %d)",
+				h.messageCount, message.Partition, message.Offset)
+			lastLoggedOffset = message.Offset
+		}
+
+		// Обновляем время последнего коммита, если прошел интервал коммита
+		if h.autoCommit && time.Since(h.lastCommitTime) >= time.Duration(h.commitInterval)*time.Second {
+			h.lastCommitTime = time.Now()
+			h.log.Infof("Выполнен автоматический коммит смещений (раздел: %d, смещение: %d)",
+				message.Partition, message.Offset)
 		}
 	}
 
