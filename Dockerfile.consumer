@@ -1,0 +1,10 @@
+FROM golang:1.23-alpine
+
+WORKDIR /app
+COPY . .
+
+RUN apk add --no-cache gcc musl-dev
+RUN go build -o console-consumer cmd/console-consumer/main.go
+RUN chmod +x console-consumer
+
+CMD ["./console-consumer"] 

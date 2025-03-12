@@ -21,6 +21,12 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: [ "CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   app:
     build: .
@@ -28,3 +34,13 @@ services:
       - kafka
     environment:
       KAFKA_BROKER: kafka:9092
+    command: [ "./mb" ]
+
+  consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.consumer
+    depends_on:
+      - kafka
+    restart: on-failure
+    command: [ "/bin/sh", "-c", "sleep 15 && ./console-consumer" ]

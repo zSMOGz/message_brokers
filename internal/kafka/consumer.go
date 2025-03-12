@@ -135,3 +135,60 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 	log.Println("Завершение выполнения ConsumeClaim")
 	return nil
 }
+
+// OnMessageFunc - функция обратного вызова для обработки сообщений
+type OnMessageFunc func(topic string, partition int32, offset int64, value []byte)
+
+// ConsoleConsumerGroupHandler - обработчик для консольного потребителя
+type ConsoleConsumerGroupHandler struct {
+	OnMessage OnMessageFunc
+}
+
+func (h *ConsoleConsumerGroupHandler) Setup(sarama.ConsumerGroupSession) error {
+	log.Println("Настройка ConsumerGroup")
+	return nil
+}
+
+func (h *ConsoleConsumerGroupHandler) Cleanup(sarama.ConsumerGroupSession) error {
+	log.Println("Очистка ConsumerGroup")
+	return nil
+}
+
+func (h *ConsoleConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	log.Printf("Начало обработки раздела %d темы %s", claim.Partition(), claim.Topic())
+
+	for msg := range claim.Messages() {
+		// Вызываем обработчик сообщений
+		if h.OnMessage != nil {
+			h.OnMessage(msg.Topic, msg.Partition, msg.Offset, msg.Value)
+		}
+
+		session.MarkMessage(msg, "")
+	}
+
+	return nil
+}
+
+// ConsumeMessagesConsole читает сообщения и направляет их в консоль
+func ConsumeMessagesConsole(ctx context.Context, cfg *config.Config, handler *ConsoleConsumerGroupHandler) {
+	log.Println("Подключение к Kafka...")
+	consumerGroup, err := sarama.NewConsumerGroup([]string{cfg.Kafka.Broker}, cfg.Kafka.ConsumerGroup, GetSaramaConfig())
+	if err != nil {
+		log.Fatalf("Ошибка создания потребителя: %v", err)
+	}
+	defer consumerGroup.Close()
+	log.Println("Успешно подключен к Kafka")
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Получен сигнал завершения работы...")
+			return
+		default:
+			// Потребляем сообщения через ConsumerGroup
+			if err := consumerGroup.Consume(ctx, []string{cfg.Kafka.TopicName}, handler); err != nil {
+				log.Printf("Ошибка потребления сообщений: %v", err)
+			}
+		}
+	}
+}

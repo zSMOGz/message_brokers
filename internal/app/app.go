@@ -33,7 +33,7 @@ func (a *App) InitializeKafka(ctx context.Context) error {
 }
 
 func (a *App) RunProducerConsumer(ctx context.Context) {
-	// Убедимся, что Kafka доступна перед запуском
+	// Проверка доступности Kafka перед запуском
 	a.log.Println("Проверяем доступность Kafka")
 	if err := a.InitializeKafka(ctx); err != nil {
 		a.log.Fatalf("Kafka недоступна: %v", err)
@@ -45,6 +45,12 @@ func (a *App) RunProducerConsumer(ctx context.Context) {
 		a.log.Fatalf("Ошибка создания производителя: %v", err)
 	}
 	defer producer.Close()
+
+	// Создаем тему с 3 партициями
+	numPartitions := 3
+	if err := kafka.CreateTopicWithPartitions(a.cfg.Kafka.Broker, a.cfg.Kafka.TopicName, numPartitions); err != nil {
+		a.log.Errorf("Ошибка при создании темы: %v", err)
+	}
 
 	// Канал для сигнализации о готовности
 	consumerReady := make(chan bool, 1)
@@ -78,6 +84,11 @@ func (a *App) RunProducerConsumer(ctx context.Context) {
 	a.log.Println("Запускаем продюсеров...")
 	go a.runSyncProducer(ctx, producer, kafka.MessageCount/2)
 	go a.runAsyncProducer(ctx, producer, kafka.MessageCount/2)
+
+	// Отправляем сообщение в каждую партицию
+	if err := producer.SendMessagesToAllPartitions(a.cfg.Kafka.TopicName, numPartitions); err != nil {
+		a.log.Errorf("Ошибка при отправке сообщений: %v", err)
+	}
 
 	// Ожидание завершения контекста
 	<-ctx.Done()
