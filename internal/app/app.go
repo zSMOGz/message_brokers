@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -23,6 +25,23 @@ type App struct {
 
 func New(log *logrus.Logger, cfg *config.Config) *App {
 	return &App{log: log, cfg: cfg}
+}
+
+// InitApp инициализирует общие компоненты приложения
+func InitApp() (*logrus.Logger, *config.Config, context.Context, context.CancelFunc) {
+	// Настройка логгера
+	log := SetupLogger()
+
+	// Загрузка конфигурации
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Ошибка загрузки конфигурации: %v", err)
+	}
+
+	// Создание контекста с обработкой сигналов
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+
+	return log, cfg, ctx, stop
 }
 
 func (a *App) InitializeKafka(ctx context.Context) error {

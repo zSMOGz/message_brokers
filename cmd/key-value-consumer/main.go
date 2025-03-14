@@ -1,21 +1,20 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/sirupsen/logrus"
 
 	"mb/internal/app"
-	"mb/internal/config"
 )
 
 func main() {
+	log, cfg, ctx, stop := app.InitApp()
+	defer stop()
+
 	// Парсим аргументы командной строки
 	topicFlag := flag.String("topic", "", "Имя темы Kafka (если не указано, используется из конфига)")
 	groupFlag := flag.String("group", "key-value-consumer-group", "Имя группы потребителей")
@@ -27,24 +26,11 @@ func main() {
 	manualMarkFlag := flag.Bool("manual-mark", false, "Вручную отмечать сообщения как прочитанные")
 	flag.Parse()
 
-	// Настраиваем логгер
-	log := app.SetupLogger()
-
-	// Загружаем конфигурацию
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("Ошибка загрузки конфигурации: %v", err)
-	}
-
 	// Используем тему из аргументов командной строки или из конфигурации
 	topic := *topicFlag
 	if topic == "" {
 		topic = cfg.Kafka.TopicName
 	}
-
-	// Создаем контекст с обработкой сигналов
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	log.Info("Запуск потребителя ключей и значений...")
 
@@ -176,13 +162,13 @@ func (h *KeyValueHandler) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 		}
 
 		// Выводим информацию о сообщении
-		fmt.Println("\n===============================================")
-		fmt.Printf("КЛЮЧ: %s\n", key)
-		fmt.Printf("ЗНАЧЕНИЕ: %s\n", value)
-		fmt.Printf("ТЕМА: %s\n", message.Topic)
-		fmt.Printf("РАЗДЕЛ: %d\n", message.Partition)
-		fmt.Printf("СМЕЩЕНИЕ: %d\n", message.Offset)
-		fmt.Printf("МЕТКА ВРЕМЕНИ: %v\n", message.Timestamp)
+		h.log.Println("\n===============================================")
+		h.log.Printf("КЛЮЧ: %s\n", key)
+		h.log.Printf("ЗНАЧЕНИЕ: %s\n", value)
+		h.log.Printf("ТЕМА: %s\n", message.Topic)
+		h.log.Printf("РАЗДЕЛ: %d\n", message.Partition)
+		h.log.Printf("СМЕЩЕНИЕ: %d\n", message.Offset)
+		h.log.Printf("МЕТКА ВРЕМЕНИ: %v\n", message.Timestamp)
 
 		// Подтверждаем получение сообщения
 		commitStatus := "Ожидание автоматического коммита"
@@ -199,10 +185,10 @@ func (h *KeyValueHandler) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 				timeToNextCommit = 0
 			}
 
-			fmt.Printf("СТАТУС: %s (автокоммит через %.1f сек)\n",
+			h.log.Printf("СТАТУС: %s (автокоммит через %.1f сек)\n",
 				commitStatus, timeToNextCommit)
 		} else {
-			fmt.Println("СТАТУС: Автоматический коммит отключен")
+			h.log.Println("СТАТУС: Автоматический коммит отключен")
 		}
 
 		fmt.Println("===============================================")

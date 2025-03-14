@@ -1,36 +1,22 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/IBM/sarama"
 
 	"mb/internal/app"
-	"mb/internal/config"
 )
 
 func main() {
+	log, cfg, ctx, stop := app.InitApp()
+	defer stop()
+
 	numMessages := flag.Int("n", 10, "Количество сообщений для отправки")
 	numKeys := flag.Int("keys", 3, "Количество разных ключей")
 	flag.Parse()
-
-	// Настраиваем логгер
-	log := app.SetupLogger()
-
-	// Загружаем конфигурацию
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("Ошибка загрузки конфигурации: %v", err)
-	}
-
-	// Создаем контекст с обработкой сигналов
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	log.Info("Запуск производителя с ключами...")
 

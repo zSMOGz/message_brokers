@@ -1,29 +1,14 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"os/signal"
-	"syscall"
-
 	"github.com/IBM/sarama"
 	"github.com/sirupsen/logrus"
 
 	"mb/internal/app"
-	"mb/internal/config"
 )
 
 func main() {
-	// Используем тот же логгер, что и в основном приложении
-	log := app.SetupLogger()
-
-	// Загружаем ту же конфигурацию, что и основное приложение
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("Ошибка конфигурации: %v", err)
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	log, cfg, ctx, stop := app.InitApp()
 	defer stop()
 	log.Info("Консольный потребитель запущен, ожидание сообщений...")
 
@@ -85,12 +70,12 @@ func (h *ConsoleHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim
 	h.log.Infof("Начало обработки раздела %d", claim.Partition())
 
 	for message := range claim.Messages() {
-		fmt.Printf("\n== СООБЩЕНИЕ ==\n")
-		fmt.Printf("Тема: %s\n", message.Topic)
-		fmt.Printf("Раздел: %d\n", message.Partition)
-		fmt.Printf("Смещение: %d\n", message.Offset)
-		fmt.Printf("Содержимое: %s\n", string(message.Value))
-		fmt.Printf("==============\n\n")
+		h.log.Printf("\n== СООБЩЕНИЕ ==\n")
+		h.log.Printf("Тема: %s\n", message.Topic)
+		h.log.Printf("Раздел: %d\n", message.Partition)
+		h.log.Printf("Смещение: %d\n", message.Offset)
+		h.log.Printf("Содержимое: %s\n", string(message.Value))
+		h.log.Printf("==============\n\n")
 
 		session.MarkMessage(message, "")
 	}

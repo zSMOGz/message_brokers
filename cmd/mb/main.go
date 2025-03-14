@@ -1,24 +1,12 @@
 package main
 
 import (
-	"context"
-	"os/signal"
-	"syscall"
-
 	"mb/internal/app"
-	"mb/internal/config"
 	"mb/internal/metrics"
 )
 
 func main() {
-	log := app.SetupLogger()
-
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("Ошибка конфигурации: %v", err)
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	log, cfg, ctx, stop := app.InitApp()
 	defer stop()
 	log.Println("Приложение запущено, ожидание сигнала завершения...")
 
